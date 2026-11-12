@@ -1,4 +1,4 @@
-# p4mcp-cli
+# p4mcp
 
 A small command-line front end for Perforce's [P4 MCP Server](https://github.com/perforce/p4mcp-server)
 (`p4mcp-server`). It starts the server over stdio, does the MCP handshake, runs one request, prints
