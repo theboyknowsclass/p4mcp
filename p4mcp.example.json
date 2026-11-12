@@ -1,0 +1,15 @@
+{
+  "P4PORT": "ssl:perforce.example.com:1666",
+  "P4USER": "your.user",
+  "defaultClient": "main",
+  "clients": {
+    "main": "your.user_main_ws",
+    "other": "your.user_other_ws"
+  },
+  "toolsets": ["files", "changelists", "shelves", "workspaces", "jobs", "reviews", "streams"],
+  "readonly": false,
+  "caBundle": null,
+  "sslVerify": true,
+  "maxResults": null,
+  "env": {}
+}
