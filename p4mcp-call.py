@@ -9,7 +9,10 @@ Usage:
   python p4mcp-call.py --schema <tool>                full input schema of one tool
   python p4mcp-call.py --call <tool> --args-file a.json
   python p4mcp-call.py --call <tool> --args '{"action":"list"}'
-  options: --client <name or alias>   override P4CLIENT (aliases in p4mcp.json "clients")
+  python p4mcp-call.py --call submit_shelf --args '{"changelist_id":"12345"}'   (local tool: p4 submit -e)
+  options: --yes                      auto-accept the server's confirmation prompts (deletes etc.);
+                                      same as "autoApprove": true in p4mcp.json
+           --client <name or alias>   override P4CLIENT (aliases in p4mcp.json "clients")
            --config <path>            default: p4mcp.json next to this file
            --raw                      print the JSON-RPC result instead of the text content
 
@@ -72,8 +75,26 @@ def build_env(cfg, client):
     return env
 
 
+def auto_answer(schema):
+    """Fill an elicitation form with 'yes' answers."""
+    content = {}
+    for name, prop in (schema or {}).get("properties", {}).items():
+        options = prop.get("enum") or [o.get("const") for o in prop.get("oneOf", []) if "const" in o]
+        if options:
+            yes = [o for o in options if str(o).lower() in ("yes", "y", "approve", "approved", "confirm", "accept", "true", "ok")]
+            content[name] = yes[0] if yes else options[0]
+        elif prop.get("type") == "boolean":
+            content[name] = True
+        elif prop.get("type") in ("integer", "number"):
+            content[name] = prop.get("default", 0)
+        else:
+            content[name] = prop.get("default", "yes")
+    return content
+
+
 class Session:
-    def __init__(self, cmd, env):
+    def __init__(self, cmd, env, auto_approve=False):
+        self.auto_approve = auto_approve
         self.proc = subprocess.Popen(
             cmd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, cwd=str(HERE))
@@ -102,14 +123,36 @@ class Session:
                 msg = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if "method" in msg and "id" in msg:
+                self._answer_server(msg)
+                continue
             if msg.get("id") == rid:
                 if "error" in msg:
                     raise RuntimeError(json.dumps(msg["error"]))
                 return msg["result"]
 
+    def _answer_server(self, msg):
+        method, mid = msg["method"], msg["id"]
+        if method == "elicitation/create":
+            params = msg.get("params") or {}
+            prompt = (params.get("message") or "").strip()
+            if self.auto_approve:
+                print(f"[auto-approved] {prompt}", file=sys.stderr)
+                result = {"action": "accept", "content": auto_answer(params.get("requestedSchema"))}
+            else:
+                print(f"[declined - pass --yes to approve] {prompt}", file=sys.stderr)
+                result = {"action": "decline"}
+            self.send({"jsonrpc": "2.0", "id": mid, "result": result})
+        elif method == "ping":
+            self.send({"jsonrpc": "2.0", "id": mid, "result": {}})
+        elif method == "roots/list":
+            self.send({"jsonrpc": "2.0", "id": mid, "result": {"roots": []}})
+        else:
+            self.send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"unsupported: {method}"}})
+
     def open(self):
         self.request("initialize", {
-            "protocolVersion": PROTOCOL, "capabilities": {},
+            "protocolVersion": PROTOCOL, "capabilities": {"elicitation": {}},
             "clientInfo": {"name": "p4mcp-call", "version": "1.0"}})
         self.send({"jsonrpc": "2.0", "method": "notifications/initialized"})
 
@@ -119,6 +162,31 @@ class Session:
             self.proc.wait(timeout=10)
         except Exception:
             self.proc.kill()
+
+
+LOCAL_TOOLS = {
+    "submit_shelf": "Submit a shelved changelist as-is (p4 submit -e <changelist_id>). Needs --yes / autoApprove. (local)",
+}
+
+
+def submit_shelf(env, args, approved):
+    cl = str(args.get("changelist_id") or "").strip()
+    if not cl.isdigit():
+        return 2, "ERROR: submit_shelf needs changelist_id"
+    if not approved:
+        return 1, f"declined: submitting shelf {cl} needs --yes (or autoApprove in p4mcp.json)"
+    from P4 import P4, P4Exception  # P4Python, installed with p4mcp-server
+    p4 = P4()
+    p4.port, p4.user = env.get("P4PORT", p4.port), env.get("P4USER", p4.user)
+    if env.get("P4CLIENT"):
+        p4.client = env["P4CLIENT"]
+    p4.exception_level = 1
+    try:
+        with p4.connect():
+            out = p4.run("submit", "-e", cl)
+        return 0, json.dumps({"status": "success", "action": "submit_shelf", "result": out}, default=str)
+    except P4Exception as e:
+        return 1, json.dumps({"status": "error", "action": "submit_shelf", "errors": p4.errors or [str(e)]})
 
 
 def main():
@@ -132,10 +200,18 @@ def main():
     ap.add_argument("--client")
     ap.add_argument("--config")
     ap.add_argument("--raw", action="store_true")
+    ap.add_argument("--yes", action="store_true", help="auto-accept confirmation prompts")
     a = ap.parse_args()
 
     cfg = load_config(a.config)
-    s = Session(build_command(cfg), build_env(cfg, a.client))
+    approved = a.yes or bool(cfg.get("autoApprove"))
+    env = build_env(cfg, a.client)
+    if a.call in LOCAL_TOOLS:
+        args = json.loads(Path(a.args_file).read_text(encoding="utf-8-sig")) if a.args_file else json.loads(a.args or "{}")
+        code, text = submit_shelf(env, args, approved)
+        print(text)
+        return code
+    s = Session(build_command(cfg), env, approved)
     try:
         s.open()
         if a.list or a.schema:
@@ -149,6 +225,8 @@ def main():
                 for t in tools:
                     desc = (t.get("description") or "").strip().splitlines()
                     print(f"{t['name']}: {desc[0] if desc else ''}")
+                for name, desc in LOCAL_TOOLS.items():
+                    print(f"{name}: {desc}")
             return 0
         if a.args_file:
             args = json.loads(Path(a.args_file).read_text(encoding="utf-8-sig"))
