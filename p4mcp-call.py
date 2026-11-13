@@ -16,6 +16,7 @@ Usage:
            --config <path>            default: p4mcp.json next to this file
            --raw                      print the JSON-RPC result instead of the text content
 
+Fixes to the installed p4mcp-server (p4mcp_patches.py) are re-applied on every start.
 Everything organisation-specific (P4PORT, P4USER, clients, toolsets, TLS) lives in p4mcp.json.
 Exit code: 0 ok, 1 tool returned an error, 2 usage / server failure.
 """
@@ -211,6 +212,11 @@ def main():
         code, text = submit_shelf(env, args, approved)
         print(text)
         return code
+    try:
+        from p4mcp_patches import ensure_patched  # re-applies fixes lost on a p4mcp-server upgrade
+        ensure_patched()
+    except Exception as e:  # never block a call on the patch step
+        print(f"[p4mcp-patch] skipped: {e}", file=sys.stderr)
     s = Session(build_command(cfg), env, approved)
     try:
         s.open()

@@ -14,7 +14,7 @@ and authenticated with your p4 ticket.
 ```powershell
 python -m venv C:\tools\p4mcp
 C:\tools\p4mcp\Scripts\python.exe -m pip install p4mcp-server
-copy p4mcp-call.py, p4mcp.example.json C:\tools\p4mcp\
+copy p4mcp-call.py, p4mcp_patches.py, p4mcp.example.json C:\tools\p4mcp\
 cd C:\tools\p4mcp; copy p4mcp.example.json p4mcp.json   # then edit
 p4 login -a
 ```
@@ -58,6 +58,17 @@ python p4mcp-call.py --client other --call query_changelists --args-file pending
 Prefer `--args-file` when calling through PowerShell or another shell layer: inline JSON quoting is easily mangled.
 
 Exit codes: 0 ok, 1 the tool returned an error, 2 usage or server failure. `--raw` prints the JSON-RPC result.
+
+## Patches to p4mcp-server
+
+`p4mcp_patches.py` holds small fixes to the installed p4mcp-server package. `p4mcp-call.py` re-applies
+any missing ones on every start, so they survive `pip install --upgrade` (the first CLI call after an
+upgrade also fixes the server that Cline runs from the same venv). Check by hand:
+`python p4mcp_patches.py --check`.
+
+- Case-insensitive changelist owner check: on a case-insensitive server the CL owner (`gbhatnagar`)
+  and `p4 info` userName (`GBhatnagar`) can differ in case, so `modify_changelists`
+  update/delete/move_files failed with "not owned by current user".
 
 ## Using the server directly from an MCP client (Cline, VS Code)
 
