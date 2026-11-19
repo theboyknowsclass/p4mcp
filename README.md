@@ -70,15 +70,52 @@ upgrade also fixes the server that Cline runs from the same venv). Check by hand
   and `p4 info` userName (`GBhatnagar`) can differ in case, so `modify_changelists`
   update/delete/move_files failed with "not owned by current user".
 
-## Using the server directly from an MCP client (Cline, VS Code)
+## Using the server from Cline
+
+Cline runs `p4mcp-server` directly; the CLI script above is not needed for this.
+
+Where Cline keeps its MCP settings:
+
+- Easiest: in Cline, click **MCP Servers** (stack icon) → **Installed** → **Configure MCP Servers**. This opens `cline_mcp_settings.json`.
+- VS Code extension: `%APPDATA%\Code\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json`
+- Cline CLI / standalone: `%USERPROFILE%\.cline\data\settings\cline_mcp_settings.json`
+
+Steps:
+
+1. Do the **Install** step above (venv + `pip install p4mcp-server`).
+2. Log in once so the server has a ticket: `p4 -p ssl:perforce.example.com:1666 -u your.user login -a`.
+3. Add a `p4` entry under `mcpServers` (merge it with any servers already there):
 
 ```json
-"p4": {
-  "command": "C:\\tools\\p4mcp\\Scripts\\p4mcp-server.exe",
-  "args": ["--toolsets", "files", "changelists", "shelves", "workspaces", "jobs", "reviews", "streams"],
-  "env": { "P4PORT": "ssl:perforce.example.com:1666", "P4USER": "your.user", "P4CLIENT": "your.user_main_ws" }
+{
+  "mcpServers": {
+    "p4": {
+      "command": "C:\\tools\\p4mcp\\Scripts\\p4mcp-server.exe",
+      "args": [
+        "--toolsets", "files", "changelists", "shelves", "workspaces", "jobs", "reviews", "streams",
+        "--log-dir", "C:\\tools\\p4mcp\\logs"
+      ],
+      "env": {
+        "P4PORT": "ssl:perforce.example.com:1666",
+        "P4USER": "your.user",
+        "P4CLIENT": "your.user_main_ws"
+      },
+      "disabled": false,
+      "timeout": 120
+    }
+  }
 }
 ```
+
+4. Save. Cline restarts the server; `p4` should show a green dot in **MCP Servers**.
+5. Test: ask Cline "list my pending changelists".
+
+Notes:
+
+- Backslashes in Windows paths must be doubled in JSON.
+- Add `"--readonly"` to `args` to disable every modify_* tool.
+- `P4CLIENT` is the workspace Cline works in. Use one entry per workspace if you need several (e.g. `p4-main`, `p4-other`).
+- Server not starting: check the log in `--log-dir`, and run `p4 login -s` to see if the ticket expired.
 
 ## License
 
